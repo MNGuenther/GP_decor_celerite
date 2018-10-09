@@ -204,6 +204,10 @@ def run(x,y,
     MEAN = mean
     
     
+    #::: outdir
+    if not os.path.exists(outdir): os.makedirs(outdir)
+    
+    
     #::: print function that prints into console and logfile at the same time 
     now = datetime.now().isoformat()
     def logprint(*text):
@@ -450,22 +454,23 @@ def run(x,y,
         ax.set( xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions (binned)" )
         fig.savefig( os.path.join(outdir,fname+'mcmc_fit_binned.pdf'), bbox_inches='tight')
 
-    Norbits = int((x[-1]-x[0])/period)+1
-    fig, axes = plt.subplots(1, Norbits, figsize=(4*Norbits,3.8), sharey=True)
-    for i in range(Norbits):
-        try:
-            ax = axes[i]
-            c1 = x > ( epoch-width+i*period )
-            c2 = x < ( epoch+width+i*period )
-            ind = np.where( c1 & c2 )[0]
-            ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
-            ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
-            ax.plot(t, mu_GP_curve, color='r', zorder=11)
-            ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
-            ax.set( xlim=[np.min(x[ind]), np.max(x[ind])], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
-        except:
-            pass
-    fig.savefig( os.path.join(outdir,fname+'mcmc_fit.pdf'), bbox_inches='tight')
+    if not any(v is None for v in [period, epoch, width]):
+        Norbits = int((x[-1]-x[0])/period)+1
+        fig, axes = plt.subplots(1, Norbits, figsize=(4*Norbits,3.8), sharey=True)
+        for i in range(Norbits):
+            try:
+                ax = axes[i]
+                c1 = x > ( epoch-width+i*period )
+                c2 = x < ( epoch+width+i*period )
+                ind = np.where( c1 & c2 )[0]
+                ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
+                ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
+                ax.plot(t, mu_GP_curve, color='r', zorder=11)
+                ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
+                ax.set( xlim=[np.min(x[ind]), np.max(x[ind])], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
+            except:
+                pass
+        fig.savefig( os.path.join(outdir,fname+'mcmc_fit.pdf'), bbox_inches='tight')
 
     #::: plot chains; format of chain = (nwalkers, nsteps, nparameters)
 #    logprint('Plot chains')
@@ -548,42 +553,43 @@ def run(x,y,
     
     
     #::: Plot the detrended data phase-folded
-    phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x, ydetr, period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
-    
-#    logprint 'Plot 2'
-    fig, ax = plt.subplots()    
-    ax.errorbar(phi, ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-    ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
-    ax.set( xlabel='Phase', ylabel=ylabel, title="Detrended data, phase folded" )
-    ax.get_yaxis().get_major_formatter().set_useOffset(False)
-    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.pdf'), bbox_inches='tight')
-    
-#    logprint 'Plot 3'
-    dtime = phase_x*period*24. #from days to hours
-    fig, ax = plt.subplots()
-    ax.errorbar(phi*period*24., ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-    ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
-    ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
-    ax.get_yaxis().get_major_formatter().set_useOffset(False)
-    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.pdf'), bbox_inches='tight')
-    
-    
-    #::: Plot the detrended data phase-folded per transit
-    fig, ax = plt.subplots()
-    Norbits = int((x[-1]-x[0])/period)+1
-    for orbit in range(Norbits):
-        try:
-            c1 = x > ( epoch-width+orbit*period )
-            c2 = x < ( epoch+width+orbit*period )
-            ind = np.where( c1 & c2 )[0]
-            phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
-            dtime = phase_x*period*24. #from days to hours
-            ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10, rasterized=True)
-        except:
-            pass
-    ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
-    ax.get_yaxis().get_major_formatter().set_useOffset(False)
-    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.pdf'), bbox_inches='tight')
+    if not any(v is None for v in [period, epoch, width]):
+        phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x, ydetr, period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
+        
+    #    logprint 'Plot 2'
+        fig, ax = plt.subplots()    
+        ax.errorbar(phi, ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
+        ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.set( xlabel='Phase', ylabel=ylabel, title="Detrended data, phase folded" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.pdf'), bbox_inches='tight')
+        
+    #    logprint 'Plot 3'
+        dtime = phase_x*period*24. #from days to hours
+        fig, ax = plt.subplots()
+        ax.errorbar(phi*period*24., ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
+        ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.pdf'), bbox_inches='tight')
+        
+        
+        #::: Plot the detrended data phase-folded per transit
+        fig, ax = plt.subplots()
+        Norbits = int((x[-1]-x[0])/period)+1
+        for orbit in range(Norbits):
+            try:
+                c1 = x > ( epoch-width+orbit*period )
+                c2 = x < ( epoch+width+orbit*period )
+                ind = np.where( c1 & c2 )[0]
+                phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
+                dtime = phase_x*period*24. #from days to hours
+                ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10, rasterized=True)
+            except:
+                pass
+        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.pdf'), bbox_inches='tight')
         
     
     
