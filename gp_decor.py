@@ -183,7 +183,10 @@ def run(x,y,
         run MCMC on many cores        
     '''
 
-
+    if (gp_code=='celerite') & ('celerite' not in sys.modules):
+        raise ValueError('You are trying to use "celerite", but it is not installed.')
+    elif (gp_code=='george') & ('george' not in sys.modules):
+        raise ValueError('You are trying to use "george", but it is not installed.')
 
     #TODO: philosophical question:
     #use median of the posterior to get 1 "median" GP for detrending?
