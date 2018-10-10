@@ -50,8 +50,6 @@ from lichtkurven import index_transits
 
 np.random.seed(21)
 
-__version__ = '0.1.0'
-
     
     
     
@@ -474,7 +472,7 @@ def run(x,y,
                 ax.set( xlim=[np.min(x[ind]), np.max(x[ind])], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
             except:
                 pass
-        fig.savefig( os.path.join(outdir,fname+'mcmc_fit.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_fit_individual.pdf'), bbox_inches='tight')
 
     #::: plot chains; format of chain = (nwalkers, nsteps, nparameters)
 #    logprint('Plot chains')
@@ -503,8 +501,6 @@ def run(x,y,
                         labels=names,
                         show_titles=True, title_kwargs={"fontsize": 12});
     fig.savefig( os.path.join(outdir,fname+'mcmc_corner.pdf'), bbox_inches='tight')
-
-
 
     
     #::: Calculate the detrended data
