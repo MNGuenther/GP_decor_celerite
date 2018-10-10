@@ -29,7 +29,6 @@ import os, sys
 from datetime import datetime
 import warnings
 import emcee
-#from scipy.optimize import minimize
 try:
     import celerite
     from celerite import terms
@@ -43,12 +42,13 @@ except:
 import corner
 from multiprocessing import Pool, cpu_count
 from contextlib import closing
-from mytools import lightcurve_tools as lct
-from mytools import index_transits
 from tqdm import tqdm 
 
-np.random.seed(21)
+#my modules
+from lichtkurven import lightcurve_tools as lct
+from lichtkurven import index_transits
 
+np.random.seed(21)
 
 __version__ = '0.1.0'
 
