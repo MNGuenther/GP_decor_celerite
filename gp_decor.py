@@ -254,9 +254,10 @@ def run(x,y,
     else:
         dic = {'TIME':x, 'EPOCH':epoch, 'PERIOD':period, 'WIDTH':width}
         if secondary_eclipse is True:
-            ind_in, ind_out = [index_transits.index_eclipses(dic)[i] for i in [0,-1]]
+            ind_ecl1, ind_ecl2, ind_out = index_transits.index_eclipses(dic)
+            ind_in = ind_ecl1+ind_ecl2
         else:
-            ind_in, ind_out = [index_transits.index_transits(dic)[i] for i in [0,3]] 
+            ind_in, ind_out = index_transits.index_transits(dic) 
     xx = x[ind_out]
     yy = y[ind_out]
     yyerr = yerr[ind_out]
