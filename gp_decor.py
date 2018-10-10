@@ -522,9 +522,6 @@ def run(x,y,
         log_rho = np.median( samples[:,1] )
         log_yerr = np.median( samples[:,2] )
         params = [log_sigma, log_rho, log_yerr]
-#        kernel = terms.Matern32Term(log_sigma=log_sigma, log_rho=log_rho)
-#        gp = celerite.GP(kernel, mean=mean) #log_white_noise=np.log(yerr), 
-#        gp.compute(xx, yerr=np.exp(log_yerr))
         gp = call_gp(params)
         mu, var = gp.predict(yy, x, return_var=True)
         mu_GP_curve = mu
