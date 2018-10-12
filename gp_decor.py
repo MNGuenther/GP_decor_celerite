@@ -44,9 +44,8 @@ from multiprocessing import Pool, cpu_count
 from contextlib import closing
 from tqdm import tqdm 
 
-#my modules
-from lichtkurven import lightcurve_tools as lct
-from lichtkurven import index_transits
+#::: my modules
+from lichtkurven import index_transits, index_eclipses, phase_fold, rebin_err, get_first_epoch
 
 np.random.seed(21)
 
@@ -96,14 +95,14 @@ def log_probability(params):
 #::: run
 def run(x,y,
         yerr=None,
-        period=None, epoch=None, width=None,
+        period=None, epoch=None, width=None, width_2=None,
         secondary_eclipse=False,
         systematics_timescale=None,
         mean=1.,
-        nwalkers=50, thin_by=50, burn_steps=1000, total_steps=5000,
+        nwalkers=50, thin_by=10, burn_steps=100, total_steps=500,
         bin_width=None,
         gp_code='celerite',
-        method='median_posterior', Nsamples_detr=10, Nsamples_plot=10,
+        method='median_posterior', chunk_size=5000, Nsamples_detr=10, Nsamples_plot=10, 
         xlabel='x', ylabel='y', ydetr_label='ydetr',
         outdir='gp_decor', fname=None,
         multiprocess=False):
@@ -130,7 +129,10 @@ def run(x,y,
         epoch of a potential transit signal
         if None, no transit region will be masked
     width : float
-        width of the region that should be masked (should be greater than the transit width)
+        width of the transit/primary eclipse region that should be masked (should be greater than the signal's width)
+        if None, no transit region will be masked
+    width_2 : float
+        width of the secondary region that should be masked (should be greater than the signal's width)
         if None, no transit region will be masked
     secondary_eclipse : bool
         mask a secondary eclipse 
@@ -154,17 +156,19 @@ def run(x,y,
         run the GP on binned data and then evaluate on unbinned data 
         (significant speed up for george)
         currently a bit buggy
-    gp_code : str
+    gp_code : str (default 'celerite')
         'celerite' or 'george'
         which GP code to use
-    method : str
+    method : str (default 'median_posterior')
         how to calculate the GP curve that's used for detrending
             'mean_curve' : take Nsamples_detr and calculate many curves, detrend by the mean of all of them
             'median_posterior' : take the median of the posterior and predict a single curve
-    Nsamples_detr : float
+    chunk_size : int (default 5000)
+        calculate gp.predict in chunks of the entire light curve (to not crash memory)
+    Nsamples_detr : float (default 10)
         only used if method=='mean_curve'
         how many samples used for detrending
-    Nsampels_plot : float
+    Nsampels_plot : float (default 10)
         only used if method=='mean_curve'
         how many samples used for plotting
     xlabel : str
@@ -185,6 +189,12 @@ def run(x,y,
         raise ValueError('You are trying to use "celerite", but it is not installed.')
     elif (gp_code=='george') & ('george' not in sys.modules):
         raise ValueError('You are trying to use "george", but it is not installed.')
+
+    
+    #::: make it luser proof and recalculate the true first epoch
+    if any(v is None for v in [period, epoch, width]):
+        epoch = get_first_epoch(epoch, period, width)
+
 
     #TODO: philosophical question:
     #use median of the posterior to get 1 "median" GP for detrending?
@@ -253,12 +263,11 @@ def run(x,y,
         ind_in = []
         ind_out = slice(None) #mark all data points as out of transit (i.e. no transit masked)
     else:
-        dic = {'TIME':x, 'EPOCH':epoch, 'PERIOD':period, 'WIDTH':width}
         if secondary_eclipse is True:
-            ind_ecl1, ind_ecl2, ind_out = index_transits.index_eclipses(dic)
+            ind_ecl1, ind_ecl2, ind_out = index_eclipses(x, epoch, period, width, width_2)
             ind_in = ind_ecl1+ind_ecl2
         else:
-            ind_in, ind_out = index_transits.index_transits(dic) 
+            ind_in, ind_out = index_transits(x, epoch, period, width) 
     xx = x[ind_out]
     yy = y[ind_out]
     yyerr = yerr[ind_out]
@@ -266,7 +275,7 @@ def run(x,y,
 
     #::: binning
     if bin_width is not None:
-        bintime_out, bindata_out, bindata_err_out, _ = lct.rebin_err(xx, yy, ferr=yyerr, dt=bin_width, ferr_type='meansig', sigmaclip=True, ferr_style='sem' )
+        bintime_out, bindata_out, bindata_err_out, _ = rebin_err(xx, yy, ferr=yyerr, dt=bin_width, ferr_type='meansig', sigmaclip=True, ferr_style='sem' )
         xx = bintime_out
         yy = bindata_out
         yyerr = bindata_err_out
@@ -396,6 +405,23 @@ def run(x,y,
         logprint('\t', '{0: <30}'.format(key), '{0: <20}'.format(tau[i]), '{0: <20}'.format((total_steps-burn_steps) / tau[i]))
     
         
+        
+        
+        
+        
+    def gp_predict_in_chunks(y, x):
+        #::: predict in chunks of 1000 data points to not crash memory
+        mu = []
+        var = []
+        for i in range( int(1.*len(x)/chunk_size)+1 ):
+            m, v = gp.predict(y, x[i*chunk_size:(i+1)*chunk_size], return_var=True)
+            mu += list(m)
+            var += list(v)
+        return np.array(mu), np.array(var)
+        
+    
+        
+        
     #::: get the samples, 
     #::: the posterior-median yerr, 
     #::: and calculate the mean GP curve / posterior-median GP curve
@@ -411,7 +437,8 @@ def run(x,y,
         std_all_samples = []
         for s in tqdm(samples[np.random.randint(len(samples), size=Nsamples_plot)]):
             gp = call_gp(s)
-            mu, var = gp.predict(yy, t, return_var=True)
+#            mu, var = gp.predict(yy, t, return_var=True)
+            mu, var = gp_predict_in_chunks(yy, t)
             std = np.sqrt(var)
             mu_all_samples.append( mu )
             std_all_samples.append( std )
@@ -424,7 +451,8 @@ def run(x,y,
         log_yerr = np.median( samples[:,2] )
         params = [log_sigma, log_rho, log_yerr]
         gp = call_gp(params)
-        mu, var = gp.predict(yy, t, return_var=True)
+#        mu, var = gp.predict(yy, t, return_var=True)
+        mu, var = gp_predict_in_chunks(yy, t)
         mu_GP_curve = mu
         std_GP_curve = np.sqrt(var)
     
@@ -474,15 +502,18 @@ def run(x,y,
                 pass
         fig.savefig( os.path.join(outdir,fname+'mcmc_fit_individual.pdf'), bbox_inches='tight')
 
+
     #::: plot chains; format of chain = (nwalkers, nsteps, nparameters)
 #    logprint('Plot chains')
     fig, axes = plt.subplots(ndim+1, 1, figsize=(6,4*(ndim+1)) )
     steps = np.arange(0,total_steps,thin_by)
     
+    
     #::: plot the lnprob_values (nwalkers, nsteps)
     for j in range(nwalkers):
         axes[0].plot(steps, sampler.get_log_prob()[:,j], '-', rasterized=True)
     axes[0].set( ylabel='lnprob', xlabel='steps' )
+    
     
     #:::plot all chains of parameters
     for i in range(ndim):
@@ -510,7 +541,8 @@ def run(x,y,
         std_all_samples = []
         for s in tqdm(samples[np.random.randint(len(samples), size=Nsamples_detr)]):
             gp = call_gp(s)
-            mu, var = gp.predict(yy, x, return_var=True)
+#            mu, var = gp.predict(yy, x, return_var=True)
+            mu, var = gp_predict_in_chunks(yy, x)
             std = np.sqrt(var)
             mu_all_samples.append( mu )
             std_all_samples.append( std )
@@ -523,71 +555,20 @@ def run(x,y,
         log_yerr = np.median( samples[:,2] )
         params = [log_sigma, log_rho, log_yerr]
         gp = call_gp(params)
-        mu, var = gp.predict(yy, x, return_var=True)
+#        mu, var = gp.predict(yy, x, return_var=True)
+        mu, var = gp_predict_in_chunks(yy, x)
         mu_GP_curve = mu
         std_GP_curve = np.sqrt(var)
         
     
     
+    logprint('\nCreating output...')
     #TODO: philosophical question:
     #does one want to include the std of the GP into the error bars of the detrended y?
     #this would mean that masked in-transit regions have way bigger error bars than the out-of-transit points
     #might not be desired...
     ydetr = y - mu_GP_curve + MEAN
     ydetr_err = ydetr * np.sqrt( (yerr/y)**2 + (std_GP_curve/mu_GP_curve)**2 )   #np.std(buf, axis=0)
-    
-    
-    
-    
-    #::: Plot the detrended data
-#    logprint 'Plot 1'
-    fig, ax = plt.subplots()
-    ax.errorbar(x, ydetr, yerr=ydetr_err, fmt='b.', capsize=0, rasterized=True)
-    ax.errorbar(x[ind_in], ydetr[ind_in], yerr=ydetr_err[ind_in], fmt='.', color='skyblue', capsize=0, rasterized=True)
-    ax.set( xlabel=xlabel, ylabel=ylabel, title="Detrended data" )
-    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr.pdf'), bbox_inches='tight')
-    
-    
-    
-    #::: Plot the detrended data phase-folded
-    if not any(v is None for v in [period, epoch, width]):
-        phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x, ydetr, period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
-        
-    #    logprint 'Plot 2'
-        fig, ax = plt.subplots()    
-        ax.errorbar(phi, ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-        ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
-        ax.set( xlabel='Phase', ylabel=ylabel, title="Detrended data, phase folded" )
-        ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.pdf'), bbox_inches='tight')
-        
-    #    logprint 'Plot 3'
-        dtime = phase_x*period*24. #from days to hours
-        fig, ax = plt.subplots()
-        ax.errorbar(phi*period*24., ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-        ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
-        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
-        ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.pdf'), bbox_inches='tight')
-        
-        
-        #::: Plot the detrended data phase-folded per transit
-        fig, ax = plt.subplots()
-        Norbits = int((x[-1]-x[0])/period)+1
-        for orbit in range(Norbits):
-            try:
-                c1 = x > ( epoch-width+orbit*period )
-                c2 = x < ( epoch+width+orbit*period )
-                ind = np.where( c1 & c2 )[0]
-                phase_x, phase_ydetr, phase_ydetr_err, _, phi = lct.phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
-                dtime = phase_x*period*24. #from days to hours
-                ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10, rasterized=True)
-            except:
-                pass
-        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded" )
-        ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.pdf'), bbox_inches='tight')
-        
     
     
     #::: Save the detrended data as .txt
@@ -604,6 +585,57 @@ def run(x,y,
     np.savetxt( os.path.join(outdir,fname+'mcmc_gp.csv'), X, header=header, delimiter=',')
 
     logprint('\nDone. All output files are in '+outdir)
+    
+    
+    #::: Plot the detrended data
+#    logprint 'Plot 1'
+    fig, ax = plt.subplots()
+    ax.errorbar(x, ydetr, yerr=ydetr_err, fmt='b.', capsize=0, rasterized=True)
+    ax.errorbar(x[ind_in], ydetr[ind_in], yerr=ydetr_err[ind_in], fmt='.', color='skyblue', capsize=0, rasterized=True)
+    ax.set( xlabel=xlabel, ylabel=ylabel, title="Detrended data" )
+    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr.pdf'), bbox_inches='tight')
+    
+    
+    
+    #::: Plot the detrended data phase-folded
+    if not any(v is None for v in [period, epoch, width]):
+        phase_x, phase_ydetr, phase_ydetr_err, _, phi = phase_fold(x, ydetr, period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
+        
+    #    logprint 'Plot 2'
+        fig, ax = plt.subplots()    
+        ax.errorbar(phi, ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
+        ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.set( xlabel='Phase', ylabel=ylabel, title="Detrended data, phase folded" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.pdf'), bbox_inches='tight')
+        
+    #    logprint 'Plot 3'
+        dtime = phase_x*period*24. #from days to hours
+        fig, ax = plt.subplots()
+        ax.errorbar(phi*period*24., ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
+        ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded, zooom" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.pdf'), bbox_inches='tight')
+        
+        
+        #::: Plot the detrended data phase-folded per transit
+        fig, ax = plt.subplots()
+        Norbits = int((x[-1]-x[0])/period)+1
+        for orbit in range(Norbits):
+            try:
+                c1 = x > ( epoch-width+orbit*period )
+                c2 = x < ( epoch+width+orbit*period )
+                ind = np.where( c1 & c2 )[0]
+                phase_x, phase_ydetr, phase_ydetr_err, _, phi = phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
+                dtime = phase_x*period*24. #from days to hours
+                ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10)
+            except:
+                pass
+        ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded, zoom, individual" )
+        ax.get_yaxis().get_major_formatter().set_useOffset(False)
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.pdf'))#, bbox_inches='tight')
+        
 
 
 
