@@ -99,7 +99,7 @@ def run(x,y,
         secondary_eclipse=False,
         systematics_timescale=None,
         mean=1.,
-        nwalkers=50, thin_by=10, burn_steps=100, total_steps=500,
+        nwalkers=50, thin_by=50, burn_steps=1000, total_steps=5000,
         bin_width=None,
         gp_code='celerite',
         method='median_posterior', chunk_size=5000, Nsamples_detr=10, Nsamples_plot=10, 
@@ -192,8 +192,8 @@ def run(x,y,
 
     
     #::: make it luser proof and recalculate the true first epoch
-    if any(v is None for v in [period, epoch, width]):
-        epoch = get_first_epoch(epoch, period, width)
+    if not any(v is None for v in [period, epoch, width]):
+        epoch = get_first_epoch(x, epoch, period)
 
 
     #TODO: philosophical question:
@@ -214,7 +214,7 @@ def run(x,y,
     GP_CODE = gp_code
     MEAN = mean
     
-    
+
     #::: outdir
     if not os.path.exists(outdir): os.makedirs(outdir)
     
@@ -271,8 +271,8 @@ def run(x,y,
     xx = x[ind_out]
     yy = y[ind_out]
     yyerr = yerr[ind_out]
-
-
+    
+    
     #::: binning
     if bin_width is not None:
         bintime_out, bindata_out, bindata_err_out, _ = rebin_err(xx, yy, ferr=yyerr, dt=bin_width, ferr_type='meansig', sigmaclip=True, ferr_style='sem' )
@@ -488,18 +488,13 @@ def run(x,y,
         Norbits = int((x[-1]-x[0])/period)+1
         fig, axes = plt.subplots(1, Norbits, figsize=(4*Norbits,3.8), sharey=True)
         for i in range(Norbits):
-            try:
-                ax = axes[i]
-                c1 = x > ( epoch-width+i*period )
-                c2 = x < ( epoch+width+i*period )
-                ind = np.where( c1 & c2 )[0]
-                ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
-                ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
-                ax.plot(t, mu_GP_curve, color='r', zorder=11)
-                ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
-                ax.set( xlim=[np.min(x[ind]), np.max(x[ind])], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
-            except:
-                pass
+            ax = axes[i]
+            x1 = ( epoch-width+i*period )
+            x2 = ( epoch+width+i*period )
+            ind = np.where( (x>x1) & (x<x2) )[0]
+            ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
+            ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
+            ax.set( xlim=[x1,x2], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
         fig.savefig( os.path.join(outdir,fname+'mcmc_fit_individual.pdf'), bbox_inches='tight')
 
 
@@ -621,12 +616,12 @@ def run(x,y,
         
         #::: Plot the detrended data phase-folded per transit
         fig, ax = plt.subplots()
-        Norbits = int((x[-1]-x[0])/period)+1
+        Norbits = int(np.round((x[-1]-epoch)/period))
         for orbit in range(Norbits):
             try:
-                c1 = x > ( epoch-width+orbit*period )
-                c2 = x < ( epoch+width+orbit*period )
-                ind = np.where( c1 & c2 )[0]
+                x1 = ( epoch-width+i*period )
+                x2 = ( epoch+width+i*period )
+                ind = np.where( (x>x1) & (x<x2) )[0]
                 phase_x, phase_ydetr, phase_ydetr_err, _, phi = phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
                 dtime = phase_x*period*24. #from days to hours
                 ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10)
