@@ -25,6 +25,7 @@ sns.set_context(rc={'lines.markeredgewidth': 1})
 #::: modules
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
 import os, sys
 from datetime import datetime
 import warnings
@@ -99,10 +100,10 @@ def run(x,y,
         secondary_eclipse=False,
         systematics_timescale=None,
         mean=1.,
-        nwalkers=50, thin_by=50, burn_steps=1000, total_steps=5000,
+        nwalkers=50, thin_by=50, burn_steps=2500, total_steps=5000,
         bin_width=None,
         gp_code='celerite',
-        method='median_posterior', chunk_size=5000, Nsamples_detr=10, Nsamples_plot=10, 
+        method='median_posterior', chunk_size=2000, Nsamples_detr=10, Nsamples_plot=10, 
         xlabel='x', ylabel='y', ydetr_label='ydetr',
         outdir='gp_decor', fname=None,
         multiprocess=False):
@@ -291,16 +292,16 @@ def run(x,y,
     
     #::: plot the data
     fig, ax = plt.subplots()
-    ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
-    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
+    ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0)
+    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0)
     ax.set( xlabel=xlabel, ylabel=ylabel, title='Original data' )
-    fig.savefig( os.path.join(outdir,fname+'data.pdf'), bbox_inches='tight')
+    fig.savefig( os.path.join(outdir,fname+'data.jpg'), dpi=100, bbox_inches='tight')
 
     if bin_width is not None:
         fig, ax = plt.subplots()
-        ax.errorbar(xx, yy, yerr=yyerr, fmt=".b", capsize=0, rasterized=True)
+        ax.errorbar(xx, yy, yerr=yyerr, fmt=".b", capsize=0)
         ax.set( xlabel=xlabel, ylabel=ylabel, title='Original data (binned)' )
-        fig.savefig( os.path.join(outdir,fname+'data_binned.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'data_binned.jpg'), dpi=100, bbox_inches='tight')
 
 #    err
     
@@ -351,12 +352,12 @@ def run(x,y,
 #    #::: plot the data and MLE fit
 #    color = 'r' #"#ff7f0e"
 #    fig, ax = plt.subplots()
-#    ax.errorbar(xx, yy, yerr=np.exp(soln.x[2]), fmt="b.", capsize=0, rasterized=True)
-#    ax.errorbar(x[ind_in], y[ind_in], yerr=np.exp(soln.x[2]), fmt=".", color='skyblue', capsize=0, rasterized=True)
+#    ax.errorbar(xx, yy, yerr=np.exp(soln.x[2]), fmt="b.", capsize=0)
+#    ax.errorbar(x[ind_in], y[ind_in], yerr=np.exp(soln.x[2]), fmt=".", color='skyblue', capsize=0)
 #    ax.plot(t, mu, color='r', zorder=11)
 #    ax.fill_between(t, mu+std, mu-std, color='r', alpha=0.3, edgecolor="none", zorder=10)
 #    ax.set( xlabel=xlabel, ylabel=ylabel, title="MLE prediction");
-#    fig.savefig( os.path.join(outdir,fname+'MLE_fit.pdf'), bbox_inches='tight')
+#    fig.savefig( os.path.join(outdir,fname+'MLE_fit.jpg'), dpi=100, bbox_inches='tight')
 #
 #    #::: delete that gp instance
 #    del gp
@@ -368,21 +369,34 @@ def run(x,y,
     ###########################################################################
     logprint('\nRunning MCMC fit...')
     if multiprocess: logprint('\tRunning on', cpu_count()-1, 'CPUs.')   
-    #::: run the MCMC fit
-    err_norm = np.nanmean(yyerr)
-    err_scale = np.nanmean(yyerr)
-    log_sigma_init = np.log(err_scale)
-    log_err_scale_init = np.log(err_scale)
+    
+    
+    #::: initial guesses
+    #::: log(sigma)
+    log_sigma_init = np.log(np.nanstd(yy))
+    
+    #::: log(rho)
     if systematics_timescale is not None:
         log_rho_init = np.log(systematics_timescale)
     else:
         log_rho_init = np.log(1.)
-    initial = np.array([log_sigma_init,log_rho_init,log_err_scale_init])
     
+    #::: log(yerr)
+    err_norm = np.nanmean(yyerr)
+    err_scale = np.nanmean(yyerr)
+    log_err_scale_init = np.log(err_scale)
+    
+    #::: all
+    initial = np.array([log_sigma_init,log_rho_init,log_err_scale_init])
+
+    
+    #::: set up MCMC
     ndim = len(initial)
     backend = emcee.backends.HDFBackend(os.path.join(outdir,fname+'mcmc_save.h5')) # Set up a new backend
     backend.reset(nwalkers, ndim)
 
+
+    #::: run MCMC
     def run_mcmc(sampler):
         p0 = initial + 1e-8 * np.random.randn(nwalkers, ndim)
         sampler.run_mcmc(p0, total_steps/thin_by, thin_by=thin_by, progress=True);
@@ -409,11 +423,11 @@ def run(x,y,
         
         
         
-    def gp_predict_in_chunks(y, x):
+    def gp_predict_in_chunks(y, x, quiet=False):
         #::: predict in chunks of 1000 data points to not crash memory
         mu = []
         var = []
-        for i in range( int(1.*len(x)/chunk_size)+1 ):
+        for i in tqdm(range( int(1.*len(x)/chunk_size)+1 ), disable=quiet):
             m, v = gp.predict(y, x[i*chunk_size:(i+1)*chunk_size], return_var=True)
             mu += list(m)
             var += list(v)
@@ -438,7 +452,7 @@ def run(x,y,
         for s in tqdm(samples[np.random.randint(len(samples), size=Nsamples_plot)]):
             gp = call_gp(s)
 #            mu, var = gp.predict(yy, t, return_var=True)
-            mu, var = gp_predict_in_chunks(yy, t)
+            mu, var = gp_predict_in_chunks(yy, t, quiet=True)
             std = np.sqrt(var)
             mu_all_samples.append( mu )
             std_all_samples.append( std )
@@ -459,30 +473,30 @@ def run(x,y,
     
     #::: Plot the data and individual posterior samples
 #    fig, ax = plt.subplots()
-#    ax.errorbar(x, y, yerr=yerr, fmt=".b", capsize=0, rasterized=True)
-#    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr, fmt=".", color='skyblue', capsize=0, rasterized=True)
+#    ax.errorbar(x, y, yerr=yerr, fmt=".b", capsize=0)
+#    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr, fmt=".", color='skyblue', capsize=0)
 #    for mu, std in zip(mu_all_samples, std_all_samples):
 #        ax.plot(t, mu, color='r', alpha=0.1, zorder=11)    
 #    ax.set( xlabel=xlabel, ylabel=ylabel, title="MCMC posterior samples", ylim=[1-0.002, 1.002] )
-#    fig.savefig( os.path.join(outdir,fname+'MCMC_fit_samples.pdf'), bbox_inches='tight')
+#    fig.savefig( os.path.join(outdir,fname+'MCMC_fit_samples.jpg'), dpi=100, bbox_inches='tight')
     
     
     #::: plot the data and "mean"+"std" GP curve
     fig, ax = plt.subplots()
-    ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
-    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
+    ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0)
+    ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0)
     ax.plot(t, mu_GP_curve, color='r', zorder=11)
     ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
     ax.set( xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
-    fig.savefig( os.path.join(outdir,fname+'mcmc_fit.pdf'), bbox_inches='tight')
+    fig.savefig( os.path.join(outdir,fname+'mcmc_fit.jpg'), dpi=100, bbox_inches='tight')
 
     if bin_width is not None:
         fig, ax = plt.subplots()
-        ax.errorbar(xx, yy, yerr=yyerr, fmt=".b", capsize=0, rasterized=True)
+        ax.errorbar(xx, yy, yerr=yyerr, fmt=".b", capsize=0)
         ax.plot(t, mu_GP_curve, color='r', zorder=11)
         ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
         ax.set( xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions (binned)" )
-        fig.savefig( os.path.join(outdir,fname+'mcmc_fit_binned.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_fit_binned.jpg'), dpi=100, bbox_inches='tight')
 
     if not any(v is None for v in [period, epoch, width]):
         Norbits = int((x[-1]-x[0])/period)+1
@@ -492,10 +506,12 @@ def run(x,y,
             x1 = ( epoch-width+i*period )
             x2 = ( epoch+width+i*period )
             ind = np.where( (x>x1) & (x<x2) )[0]
-            ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0, rasterized=True)
-            ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0, rasterized=True)
+            ax.errorbar(x[ind_out], y[ind_out], yerr=yerr[ind_out], fmt=".b", capsize=0)
+            ax.errorbar(x[ind_in], y[ind_in], yerr=yerr[ind_in], fmt=".", color='skyblue', capsize=0)
+            ax.plot(t, mu_GP_curve, color='r', zorder=11)
+            ax.fill_between(t, mu_GP_curve+std_GP_curve, mu_GP_curve-std_GP_curve, color='r', alpha=0.3, edgecolor="none", zorder=10)
             ax.set( xlim=[x1,x2], xlabel=xlabel, ylabel=ylabel, title="MCMC posterior predictions" )
-        fig.savefig( os.path.join(outdir,fname+'mcmc_fit_individual.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_fit_individual.jpg'), dpi=100, bbox_inches='tight')
 
 
     #::: plot chains; format of chain = (nwalkers, nsteps, nparameters)
@@ -506,7 +522,7 @@ def run(x,y,
     
     #::: plot the lnprob_values (nwalkers, nsteps)
     for j in range(nwalkers):
-        axes[0].plot(steps, sampler.get_log_prob()[:,j], '-', rasterized=True)
+        axes[0].plot(steps, sampler.get_log_prob()[:,j], '-')
     axes[0].set( ylabel='lnprob', xlabel='steps' )
     
     
@@ -515,22 +531,23 @@ def run(x,y,
         ax = axes[i+1]
         ax.set( ylabel=names[i], xlabel='steps')
         for j in range(nwalkers):
-            ax.plot(steps, sampler.chain[j,:,i], '-', rasterized=True)
+            ax.plot(steps, sampler.chain[j,:,i], '-')
         ax.axvline( burn_steps, color='k', linestyle='--' )
     
     plt.tight_layout()
-    fig.savefig( os.path.join(outdir,fname+'mcmc_chains.pdf'), bbox_inches='tight')
+    fig.savefig( os.path.join(outdir,fname+'mcmc_chains.jpg'), dpi=100, bbox_inches='tight')
  
         
     #::: plot corner
     fig = corner.corner(samples,
                         labels=names,
                         show_titles=True, title_kwargs={"fontsize": 12});
-    fig.savefig( os.path.join(outdir,fname+'mcmc_corner.pdf'), bbox_inches='tight')
+    fig.savefig( os.path.join(outdir,fname+'mcmc_corner.jpg'), dpi=100, bbox_inches='tight')
 
     
     #::: Calculate the detrended data
     logprint('\nRetrieve samples for detrending...')
+    sys.stdout.flush()
     if method=='mean_curve':
         mu_all_samples = []
         std_all_samples = []
@@ -562,8 +579,10 @@ def run(x,y,
     #does one want to include the std of the GP into the error bars of the detrended y?
     #this would mean that masked in-transit regions have way bigger error bars than the out-of-transit points
     #might not be desired...
+    #also, it leads to weirdly large random errorbars at some points...
     ydetr = y - mu_GP_curve + MEAN
-    ydetr_err = ydetr * np.sqrt( (yerr/y)**2 + (std_GP_curve/mu_GP_curve)**2 )   #np.std(buf, axis=0)
+    ydetr_err = yerr
+#    ydetr_err = ydetr * np.sqrt( (yerr/y)**2 + (std_GP_curve/mu_GP_curve)**2 )   #np.std(buf, axis=0)
     
     
     #::: Save the detrended data as .txt
@@ -582,14 +601,27 @@ def run(x,y,
     logprint('\nDone. All output files are in '+outdir)
     
     
+    #::: plotting helper
+#    def sigma_clip(a, low=3., high=3., iters=5):
+#        for i in range(iters):
+#            ind = np.where( (np.nanmean(a)-np.nanstd(a)*low < a) & (a < np.nanmean(a)+np.nanstd(a)*high ) )[0]
+#            a = a[ind]
+#        return a
+#    
+#    def get_ylim(y,yerr):
+#        y1 = sigma_clip( y-yerr )
+#        y2 = sigma_clip( y+yerr )
+#        yrange = np.nanmax(y2) - np.nanmin(y1)
+#        return [ np.nanmin(y1)-0.1*yrange, np.nanmax(y2)+0.1*yrange ]
+        
+    
     #::: Plot the detrended data
 #    logprint 'Plot 1'
     fig, ax = plt.subplots()
-    ax.errorbar(x, ydetr, yerr=ydetr_err, fmt='b.', capsize=0, rasterized=True)
-    ax.errorbar(x[ind_in], ydetr[ind_in], yerr=ydetr_err[ind_in], fmt='.', color='skyblue', capsize=0, rasterized=True)
+    ax.errorbar(x, ydetr, yerr=ydetr_err, fmt='b.', capsize=0)
+    ax.errorbar(x[ind_in], ydetr[ind_in], yerr=ydetr_err[ind_in], fmt='.', color='skyblue', capsize=0)
     ax.set( xlabel=xlabel, ylabel=ylabel, title="Detrended data" )
-    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr.pdf'), bbox_inches='tight')
-    
+    fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr.jpg'), dpi=100, bbox_inches='tight')
     
     
     #::: Plot the detrended data phase-folded
@@ -598,38 +630,37 @@ def run(x,y,
         
     #    logprint 'Plot 2'
         fig, ax = plt.subplots()    
-        ax.errorbar(phi, ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-        ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.plot(phi, ydetr, marker='.', linestyle='none', color='lightgrey')
+        ax.errorbar(phase_x, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10)
         ax.set( xlabel='Phase', ylabel=ylabel, title="Detrended data, phase folded" )
         ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded.jpg'), dpi=100, bbox_inches='tight')
         
     #    logprint 'Plot 3'
         dtime = phase_x*period*24. #from days to hours
         fig, ax = plt.subplots()
-        ax.errorbar(phi*period*24., ydetr, yerr=ydetr_err, marker='.', linestyle='none', color='lightgrey', rasterized=True)
-        ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10, rasterized=True)
+        ax.plot(phi*period*24., ydetr, marker='.', linestyle='none', color='lightgrey')
+        ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, fmt='b.', capsize=0, zorder=10)
         ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded, zooom" )
         ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.pdf'), bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom.jpg'), dpi=100, bbox_inches='tight')
         
         
         #::: Plot the detrended data phase-folded per transit
         fig, ax = plt.subplots()
-        Norbits = int(np.round((x[-1]-epoch)/period))
-        for orbit in range(Norbits):
-            try:
-                x1 = ( epoch-width+i*period )
-                x2 = ( epoch+width+i*period )
-                ind = np.where( (x>x1) & (x<x2) )[0]
-                phase_x, phase_ydetr, phase_ydetr_err, _, phi = phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
-                dtime = phase_x*period*24. #from days to hours
-                ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, marker='.', linestyle='none', capsize=0, zorder=10)
-            except:
-                pass
+        Norbits = int((x[-1]-x[0])/period)+1
+        for i in range(Norbits):
+            cmap = get_cmap('inferno')
+            color = cmap(1.*i/Norbits)
+            x1 = ( epoch-width+i*period )
+            x2 = ( epoch+width+i*period )
+            ind = np.where( (x>x1) & (x<x2) )[0]
+            phase_x, phase_ydetr, phase_ydetr_err, _, phi = phase_fold(x[ind], ydetr[ind], period, epoch, dt = dt, ferr_type=ferr_type, ferr_style=ferr_style, sigmaclip=sigmaclip)
+            dtime = phase_x*period*24. #from days to hours
+            ax.errorbar(dtime, phase_ydetr, yerr=phase_ydetr_err, color=color, marker='.', linestyle='none', capsize=0, zorder=10)
         ax.set( xlim=[-width*24.,width*24.], xlabel=r'$T - T_0 \ (h)$', ylabel=ylabel, title="Detrended data, phase folded, zoom, individual" )
         ax.get_yaxis().get_major_formatter().set_useOffset(False)
-        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.pdf'))#, bbox_inches='tight')
+        fig.savefig( os.path.join(outdir,fname+'mcmc_ydetr_phase_folded_zoom_individual.jpg'))#, dpi=100, bbox_inches='tight')
         
 
 
